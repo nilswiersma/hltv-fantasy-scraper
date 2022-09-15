@@ -1,0 +1,8 @@
+selenium
+selenium-wire
+jupyterlab
+pandas
+numpy
+matplotlib
+pyyaml
+openpyxl
