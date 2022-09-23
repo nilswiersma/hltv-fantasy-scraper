@@ -20,6 +20,9 @@ logger.addHandler(ch)
 
 parser = argparse.ArgumentParser(description="HLTV fantasy booster scaper")
 parser.add_argument('-v', '--verbose', action='count')
+parser.add_argument('-k', '--keep-open', 
+    action='count',
+    help="Keep browser window open after script is done")
 args = parser.parse_args()
 
 if not args.verbose:
@@ -39,7 +42,7 @@ id_loginpopup = 'loginpopup'
 class_signin = "navsignin"
 class_logininputs = "loginInput"
 class_fantasy = "navfantasy"
-class_boosterbutton = 'assign-booster-button'
+class_rolebutton = "assign-role-button"
 class_powerview = 'toggle-advanced-btn'
 class_boostercontainer = 'booster-overview-component'
 class_booster = 'booster-icon-container'
@@ -89,7 +92,7 @@ try:
     driver.get(leagueurl)
     logger.info(f'checking {leagueurl}')
     
-    driver.find_element(By.CLASS_NAME, class_boosterbutton).click()
+    driver.find_element(By.CLASS_NAME, class_rolebutton).click()
 
     driver.find_element(By.CLASS_NAME, class_powerview).click()
 
@@ -112,10 +115,11 @@ try:
             booster_data.append(repr(data))
         scraped[booster_name] = booster_data
 
-    with open(f'.scraped-{leagueid}-boosters.yml', 'w') as outf:
+    with open(f'.scraped-{leagueid}-roles.yml', 'w') as outf:
         yaml.dump(scraped, outf)         
 
 finally:
     pass
-    input("exit?")
-    driver.close()
+    if not args.keep_open:
+        input("exit?")
+        driver.close()

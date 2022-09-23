@@ -1,8 +1,11 @@
 selenium
 selenium-wire
-jupyterlab
 pandas
 numpy
-matplotlib
 pyyaml
 openpyxl
+
+jupyterlab
+matplotlib
+seaborn
+ipympl
