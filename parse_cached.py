@@ -40,7 +40,7 @@ def parse_players(scraped) -> pd.DataFrame:
             elif key == 'teamname':
                 row['team'] = value
             elif key == 'teamrank':
-                row['rank'] = value.split(' ')[0].replace('#', '')
+                row['rank'] = int(value.split(' ')[0].replace('#', ''))
             elif key == 'stats':
                 for stat in value:
                     stat = eval(stat)
@@ -75,23 +75,32 @@ def parse_boosters(scraped) -> pd.DataFrame:
 
 def parse_roles(scraped) -> pd.DataFrame:
     data = []
-    for role, players in scraped.items():
-        logger.info(f'{role=}')
-        for playerstr in players:
-            logger.debug(f'{playerstr=}')
-            playerstr = eval(playerstr)
-            name, game, percentage = playerstr.split('\n')[:3]
-            percentage = percentage.replace('%', '')
-            logger.info(f'{name=} {percentage=}')
-            data.append({'role': role, 'name': name, 'percentage': int(percentage)})
+    for player, role in scraped.items():
+        logger.info(f'{player=}')
+        for role, rolestr in role.items():
+            logger.debug(f'{role=}')
+            logger.debug(f'{rolestr=}')
+            rolestr = rolestr.replace(' of matches', '')
+            rolestr = rolestr.replace('%', '')
+            big, little = rolestr.split(' / ')
+            logger.info(f'{player=} {big=} {little=}')
+            data.append({'role': role, 'player': player, 'big': int(big), 'little': int(little)})
     return pd.DataFrame(data)
 
 with open('settings.yml', 'r') as f:
     settings = yaml.safe_load(f)
     leagueid = settings['leagueid']
 
-pages = ['players', 'boosters', 'roles']
-parsers = parse_players, parse_boosters, parse_roles
+pages = [
+    'players', 
+    'boosters', 
+    'roles',
+]
+parsers = (
+    parse_players, 
+    parse_boosters, 
+    parse_roles,
+)
 
 for page, parser in zip(pages, parsers):
     try:
@@ -111,34 +120,3 @@ for page, parser in zip(pages, parsers):
         df.to_excel(writer)
 
     break
-
-    # data = []
-    # for booster, players in scraped.items():
-    #     print(booster)
-    #     for playerstr in players:
-    #         name, game, percentage = parse_it(playerstr)
-    #         print(name, percentage)
-    #         data.append({'booster': booster, 'name': name, 'percentage': int(percentage)})
-
-
-# for portion in ['boosters', 'roles']:
-#     try:
-#         fname = f'.scraped-{portion}-{leagueid}.yml'
-#         with open(fname, 'r') as inf:
-#             scraped = yaml.safe_load(inf)
-#     except FileNotFoundError:
-#         logger.error(f'cannot find {fname}, skipping')
-#         continue
-
-#     data = []
-#     for booster, players in scraped.items():
-#         print(booster)
-#         for playerstr in players:
-#             name, game, percentage = parse_it(playerstr)
-#             print(name, percentage)
-#             data.append({'booster': booster, 'name': name, 'percentage': int(percentage)})
-
-#     df = pd.DataFrame(data)
-#     df.to_pickle(f'pickles/{leagueid}-{portion}.pkl')
-#     with pd.ExcelWriter(f'spreadsheets/{leagueid}-{portion}.xlsx') as writer:
-#         df.pivot(index='name', columns='booster').to_excel(writer)

@@ -11,6 +11,7 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import StaleElementReferenceException, ElementClickInterceptedException, NoSuchElementException
 from selenium.webdriver.support.ui import Select
+from selenium.webdriver.remote.webdriver import WebDriver
 
 logger = logging.getLogger(__name__)
 ch = logging.StreamHandler()
@@ -36,6 +37,28 @@ CLASS_BOOSTERNAME = 'booster-description-title'
 CLASS_PLAYERCONTAINER = 'booster-compact-mode-component'
 CLASS_PLAYER = 'booster-compact-mode-player'
 CLASS_LOGINBUTTON = "login-button"
+CLASS_CLOSEBUTTON = 'modal-close-button'
+CLASS_SETTINGSDROPDOWN = 'dropdown-subtab'
+CLASS_PLAYERREMOVE = 'playerButtonRemove'
+
+# patch to make it possible to reattach to running webdriver
+# https://stackoverflow.com/a/48194907
+# doesnt work once the original script has exited :(
+def attach_to_session(executor_url, session_id):
+    original_execute = WebDriver.execute
+    def new_command_execute(self, command, params=None):
+        if command == "newSession":
+            # Mock the response
+            return {'success': 0, 'value': None, 'sessionId': session_id}
+        else:
+            return original_execute(self, command, params)
+    # Patch the function before creating the driver object
+    WebDriver.execute = new_command_execute
+    driver = webdriver.Remote(command_executor=executor_url, desired_capabilities={})
+    driver.session_id = session_id
+    # Replace the patched function with original function
+    WebDriver.execute = original_execute
+    return driver
 
 
 class HltvContext():
@@ -63,11 +86,11 @@ class HltvContext():
             self.leagueid = settings['leagueid']
             logger.info(f'{self.leagueid=}')
 
-        self.drrrrriver = driver
+        self.driver = driver
 
         self.implicit_wait = implicit_wait
         logger.info("initializing driver with 'https://www.hltv.org/'")
-        self.drrrrriver.get("https://www.hltv.org/")
+        self.driver.get("https://www.hltv.org/")
 
     def __enter__(self):
         return self
@@ -75,7 +98,10 @@ class HltvContext():
     def __exit__(self, *args):
         logger.debug(f'{args=}')
         if not self.args.keep_open:
-            self.drrrrriver.close()
+            self.driver.close()
+        else:
+            logger.warning(f'keeping webdriver open, to reconnect use below')
+            logger.warning(f'--session-id {driver.session_id} --executor-url {driver.command_executor._url}')
 
     @property
     def implicit_wait(self):
@@ -85,7 +111,7 @@ class HltvContext():
     def implicit_wait(self, implicit_wait):
         logger.info(f'{implicit_wait=}s')
         self._implicit_wait = implicit_wait
-        self.drrrrriver.implicitly_wait(implicit_wait)
+        self.driver.implicitly_wait(implicit_wait)
 
     @implicit_wait.deleter
     def implicit_wait(self):
@@ -96,40 +122,40 @@ class HltvContext():
     def cookie_pass(self):
         logger.info('waiting for cookie button')
         try:
-            elem = self.drrrrriver.find_element(By.XPATH, XPATH_COOKIEBUTTON)
+            elem = self.driver.find_element(By.XPATH, XPATH_COOKIEBUTTON)
             elem.click()
         except NoSuchElementException as e:
             logger.warning(f'{str(e)=}, assuming no cookie popup')
 
     def login(self):
         # This tends to trigger manual captcha
-        self.drrrrriver.find_element(By.CLASS_NAME, CLASS_SIGNIN).click()
-        elems_login = self.drrrrriver.find_element(By.ID, ID_LOGINPOPUP).find_elements(By.CLASS_NAME, CLASS_LOGININPUTS)
+        self.driver.find_element(By.CLASS_NAME, CLASS_SIGNIN).click()
+        elems_login = self.driver.find_element(By.ID, ID_LOGINPOPUP).find_elements(By.CLASS_NAME, CLASS_LOGININPUTS)
         elems_login[0].send_keys(self.username)
         elems_login[1].send_keys(self.password)
-        self.drrrrriver.find_element(By.CLASS_NAME, CLASS_LOGINBUTTON).click()
+        self.driver.find_element(By.CLASS_NAME, CLASS_LOGINBUTTON).click()
 
     def goto_leaguepage(self):
         leagueurl = f'https://www.hltv.org/fantasy/{self.leagueid}/gameredirect'
         logger.info(f'checking {leagueurl}')
-        self.drrrrriver.get(leagueurl)
+        self.driver.get(leagueurl)
 
         logger.info(f'waiting a second for redirect')
         time.sleep(1)
 
-        if 'team' in self.drrrrriver.current_url:
+        if 'team' in self.driver.current_url:
             logger.info(f'have team in {self.leagueid=}')
-        elif 'overview' in self.drrrrriver.current_url:
+        elif 'overview' in self.driver.current_url:
             logger.info(f'do not have team in {self.leagueid=}')
         else:
-            logger.warning(f'do not understand redirect for {self.leagueid=} ({self.drrrrriver.current_url})')
+            logger.warning(f'do not understand redirect for {self.leagueid=} ({self.driver.current_url})')
 
-    def scrape_roles_or_boosters(self, which):
+    def scrape_powerview(self, which):
         button_locator = None
 
         if which == 'roles':
             button_locator = CLASS_ROLEBUTTON
-            elem = self.drrrrriver.find_element(By.CLASS_NAME, button_locator)
+            elem = self.driver.find_element(By.CLASS_NAME, button_locator)
             if 'not-assigned' not in elem.get_attribute('class'):
                 logger.error('cannot open role view, it is not clickable')
                 return
@@ -137,25 +163,25 @@ class HltvContext():
 
         elif which == 'boosters':
             button_locator = CLASS_BOOSTERBUTTON
-            elem = self.drrrrriver.find_element(By.CLASS_NAME, button_locator)
+            elem = self.driver.find_element(By.CLASS_NAME, button_locator)
             elem.click()
-            Select(self.drrrrriver.find_element(By.CLASS_NAME, 'modal-title').find_element(By.TAG_NAME, 'select')).select_by_visible_text('Assign booster')
+            Select(self.driver.find_element(By.CLASS_NAME, 'modal-title').find_element(By.TAG_NAME, 'select')).select_by_visible_text('Assign booster')
         else:
             raise NotImplementedError(f'can only scrape "roles" or "boosters" (not {which=}')
 
-        self.drrrrriver.find_element(By.CLASS_NAME, CLASS_POWERVIEW).click()
+        self.driver.find_element(By.CLASS_NAME, CLASS_POWERVIEW).click()
 
         scraped = {}
-        elems_booster = self.drrrrriver.find_element(By.CLASS_NAME, CLASS_BOOSTERCONTAINER).find_elements(By.CLASS_NAME, CLASS_BOOSTER)
-        for elem_booster in elems_booster:
+        elem_boosters = self.driver.find_element(By.CLASS_NAME, CLASS_BOOSTERCONTAINER).find_elements(By.CLASS_NAME, CLASS_BOOSTER)
+        for elem_booster in elem_boosters:
             try:
                 elem_booster.click()
             except StaleElementReferenceException as e:
                 logger.info(f'skipping element: {type(e)}, {str(e)}')
                 continue
-            booster_name = self.drrrrriver.find_element(By.CLASS_NAME, CLASS_BOOSTERNAME).text
+            booster_name = self.driver.find_element(By.CLASS_NAME, CLASS_BOOSTERNAME).text
             logger.debug(booster_name)
-            elems_player = self.drrrrriver.find_element(By.CLASS_NAME, CLASS_PLAYERCONTAINER).find_elements(By.CLASS_NAME, CLASS_PLAYER)
+            elems_player = self.driver.find_element(By.CLASS_NAME, CLASS_PLAYERCONTAINER).find_elements(By.CLASS_NAME, CLASS_PLAYER)
             
             booster_data = []
             for elem_player in elems_player:
@@ -164,7 +190,7 @@ class HltvContext():
                 booster_data.append(repr(data))
             scraped[booster_name] = booster_data
         
-        self.drrrrriver.find_element(By.CLASS_NAME, 'modal-close-button').click()
+        self.driver.find_element(By.CLASS_NAME, CLASS_CLOSEBUTTON).click()
 
         filename = f'scraped/{self.leagueid}-{which}.yml'
         logger.info(f'dumping scraped data to {filename=}')
@@ -172,24 +198,62 @@ class HltvContext():
             yaml.dump(scraped, outf)
 
     def cache_roles(self):
-        self.scrape_roles_or_boosters('roles')
+        # # this only gets big average trigger rate
+        # self.scrape_powerview('roles')
+        elem = self.driver.find_element(By.CLASS_NAME, CLASS_ROLEBUTTON)
+        if 'not-assigned' not in elem.get_attribute('class'):
+            print('cannot open role view, it is not clickable')
+            raise Exception()
+        elem.click()
+
+        scraped = {}
+        while True:
+            elem_nextplayer = self.driver.find_element(By.CLASS_NAME, 'booster-next-player')
+            playername = self.driver.find_element(By.CLASS_NAME, 'player-visible').text
+            logger.info(f'{playername=}')
+            scraped[playername] = {}
+            elem_boosters = self.driver.find_element(By.CLASS_NAME, CLASS_BOOSTERCONTAINER).find_elements(By.CLASS_NAME, CLASS_BOOSTER)
+            for elem_booster in elem_boosters:
+                try:
+                    elem_booster.click()
+                except StaleElementReferenceException as e:
+                    logger.info(f'skipping element {elem_booster.text=}: {type(e)}, {str(e)}')
+                    continue
+                booster_name = self.driver.find_element(By.CLASS_NAME, CLASS_BOOSTERNAME).text
+                logger.debug(f'{booster_name=}')
+                booster_data = self.driver.find_element(By.CLASS_NAME, 'booster-trigger-rate').text
+                logger.debug(f'{booster_data=}')
+                scraped[playername][booster_name] = booster_data
+            
+            if 'inactive' in elem_nextplayer.get_attribute('class'):
+                break
+            else:
+                elem_nextplayer.click()
+
+        self.driver.find_element(By.CLASS_NAME, CLASS_CLOSEBUTTON).click()
+
+        filename = f'scraped/{self.leagueid}-roles.yml'
+        logger.info(f'dumping scraped data to {filename=}')
+        with open(filename, 'w') as outf:
+            yaml.dump(scraped, outf)
     
     def cache_boosters(self):
-        self.scrape_roles_or_boosters('boosters')
+        self.scrape_powerview('boosters')
 
     def cache_players(self):
-        elem = self.drrrrriver.find_elements(By.CLASS_NAME, 'sub-menu-tab')[-1]
+        CLASS_SETTINGS = 'sub-menu-tab'
+        elem = self.driver.find_elements(By.CLASS_NAME, CLASS_SETTINGS)[-1]
         if elem.text != 'Settings':
             logger.warning('cannot cache players, edit lineup not available')
             return
         elem.click()
-        self.drrrrriver.find_elements(By.CLASS_NAME, 'dropdown-subtab')[0].click()
+        self.driver.find_elements(By.CLASS_NAME, CLASS_SETTINGSDROPDOWN)[0].click()
 
         # they reorder when you dont remove in reverse order, making the references stale
-        [elem.click() for elem in self.drrrrriver.find_elements(By.CLASS_NAME, 'playerButtonRemove')[::-1]]
+        [elem.click() for elem in self.driver.find_elements(By.CLASS_NAME, CLASS_PLAYERREMOVE)[::-1]]
         
         scraped = {}
-        for elem in self.drrrrriver.find_elements(By.CLASS_NAME, 'teamCon'):
+        for elem in self.driver.find_elements(By.CLASS_NAME, 'teamCon'):
             teamname = elem.find_element(By.CLASS_NAME, 'teamName').text
             logger.debug(f'{teamname=}')
             teamrank = elem.find_element(By.CLASS_NAME, 'teamRank').text
@@ -222,6 +286,10 @@ if __name__ == "__main__":
     parser.add_argument('-k', '--keep-open', 
         action='count',
         help="Keep browser window open after script is done")
+    parser.add_argument('--session-id',
+        help="session-id of a running webdriver instance (need to be used with --executor-url).")
+    parser.add_argument('--executor-url',
+        help="executor-url of a running webdriver instance (need to be used with --session-id).")
     args = parser.parse_args()
 
     if not args.verbose:
@@ -232,7 +300,11 @@ if __name__ == "__main__":
         logger.setLevel(logging.DEBUG)
     
     logger.info("Opening webdriver")
-    driver = webdriver.Firefox()
+    if args.session_id and args.executor_url:
+        driver = attach_to_session(args.executor_url, args.session_id)
+    else:
+        driver = webdriver.Firefox()
+
     with HltvContext(args, driver) as ctx:
         ctx.cookie_pass()
         ctx.login()

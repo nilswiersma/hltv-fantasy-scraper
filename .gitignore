@@ -2,5 +2,6 @@
 *.yml
 *.pkl
 *.xlsx
+__pycache__
 geckodriver.log
 settings.yml
