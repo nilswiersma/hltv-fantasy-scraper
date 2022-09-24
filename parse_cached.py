@@ -32,7 +32,6 @@ def parse_it(line):
 def parse_players(scraped) -> pd.DataFrame:
     data = []
     for player, info in scraped.items():
-        print(player)
         row = {'player': player}
         for key, value in info.items():
             if key == 'playerprice':
@@ -118,5 +117,3 @@ for page, parser in zip(pages, parsers):
     with pd.ExcelWriter(f'spreadsheets/{leagueid}-{page}.xlsx') as writer:
         # df.pivot(index='name', columns='booster').to_excel(writer)
         df.to_excel(writer)
-
-    break
