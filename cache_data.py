@@ -4,6 +4,7 @@ import time
 import re
 import argparse
 import sys
+import itertools
 
 import yaml
 # from seleniumwire import webdriver
@@ -67,24 +68,26 @@ class HltvContext():
         self.args = args
 
         with open('settings.yml', 'r') as f:
-            settings = yaml.safe_load(f)
+            self.settings = yaml.safe_load(f)
             
-            username = settings['username']
+            username = self.settings['username']
             if username == 'your@ema.il':
                 logger.error(f"'username:' not set")
                 sys.exit(-1)
             self.username = username
             logger.info(f'{self.username=}')
 
-            password = settings['password']
+            password = self.settings['password']
             if password == 'hunter123':
                 logger.error(f"'password:' not set")
                 sys.exit(-1)
             self.password = password
             logger.info(f'self.password=*****')
 
-            self.leagueid = settings['leagueid']
-            logger.info(f'{self.leagueid=}')
+            self._leagueids = self.settings['leagueids']
+            self._current_leagueid = self.settings['leagueid']
+            logger.info(f'{self._leagueids=}')
+            logger.info(f'{self._current_leagueid=}')
 
         self.driver = driver
 
@@ -115,8 +118,32 @@ class HltvContext():
 
     @implicit_wait.deleter
     def implicit_wait(self):
-        print("deleter of implicit_wait called")
         del self._implicit_wait
+
+    @property
+    def current_leagueid(self):
+        return self._current_leagueid
+    
+    @current_leagueid.setter
+    def current_leagueid(self, leagueid):
+        self._current_leagueid = leagueid
+        self.write_settings()
+
+    @property
+    def leagueids(self):
+        return self._leagueids
+    
+    @leagueids.setter
+    def leagueids(self, leagueids):
+        self._leagueids = leagueids
+        self.write_settings()
+
+    def write_settings(self):
+        self.settings['leagueid'] = self.current_leagueid
+        self.settings['leagueids'] = self.leagueids
+
+        with open('settings.yml', 'w') as f:
+            yaml.safe_dump(self.settings, f)
 
     ## Generic functions to navigate hltv
     def cookie_pass(self):
@@ -135,8 +162,12 @@ class HltvContext():
         elems_login[1].send_keys(self.password)
         self.driver.find_element(By.CLASS_NAME, CLASS_LOGINBUTTON).click()
 
+    def goto_fantasypage(self):
+        leagueurl = f'https://www.hltv.org/fantasy'
+        self.driver.get(leagueurl)
+
     def goto_leaguepage(self):
-        leagueurl = f'https://www.hltv.org/fantasy/{self.leagueid}/gameredirect'
+        leagueurl = f'https://www.hltv.org/fantasy/{self.current_leagueid}/gameredirect'
         logger.info(f'checking {leagueurl}')
         self.driver.get(leagueurl)
 
@@ -144,11 +175,33 @@ class HltvContext():
         time.sleep(1)
 
         if 'team' in self.driver.current_url:
-            logger.info(f'have team in {self.leagueid=}')
+            logger.info(f'have team in {self.current_leagueid=}')
+            return True
         elif 'overview' in self.driver.current_url:
-            logger.info(f'do not have team in {self.leagueid=}')
+            logger.warning(f'do not have team in {self.current_leagueid=}')
+            return False
         else:
-            logger.warning(f'do not understand redirect for {self.leagueid=} ({self.driver.current_url})')
+            logger.warning(f'do not understand redirect for {self.current_leagueid=} ({self.driver.current_url})')
+            return False
+        
+    def scrape_games(self, which):
+        if which == 'live':
+            button_class = 'game-live'
+        elif which == 'draft':
+            button_class = 'game-draft'
+        else:
+            raise NotImplementedError(f'can only scrape "live" or "draft" (not {which=}')
+
+        game_elems = self.driver.find_element(By.CLASS_NAME, 'season-games').find_elements(By.CLASS_NAME, button_class)
+        ret = []
+        if len(game_elems) > 0:
+            for elem in game_elems:
+                title = elem.find_element(By.XPATH, './ancestor::a').text.split('\n')[0]
+                id = int(elem.find_element(By.XPATH, './ancestor::a').get_attribute('href').split('/')[-2])
+                ret.append((title, id))
+        
+        return ret
+
 
     def scrape_powerview(self, which):
         button_locator = None
@@ -192,7 +245,7 @@ class HltvContext():
         
         self.driver.find_element(By.CLASS_NAME, CLASS_CLOSEBUTTON).click()
 
-        filename = f'scraped/{self.leagueid}-{which}.yml'
+        filename = f'scraped/{self.current_leagueid}-{which}.yml'
         logger.info(f'dumping scraped data to {filename=}')
         with open(filename, 'w') as outf:
             yaml.dump(scraped, outf)
@@ -232,7 +285,7 @@ class HltvContext():
 
         self.driver.find_element(By.CLASS_NAME, CLASS_CLOSEBUTTON).click()
 
-        filename = f'scraped/{self.leagueid}-roles.yml'
+        filename = f'scraped/{self.current_leagueid}-roles.yml'
         logger.info(f'dumping scraped data to {filename=}')
         with open(filename, 'w') as outf:
             yaml.dump(scraped, outf)
@@ -275,7 +328,7 @@ class HltvContext():
                     'stats': stats
                     }
         
-        filename = f'scraped/{self.leagueid}-players.yml'
+        filename = f'scraped/{self.current_leagueid}-players.yml'
         logger.info(f'dumping scraped data to {filename=}')
         with open(filename, 'w') as outf:
             yaml.dump(scraped, outf)
@@ -286,6 +339,9 @@ if __name__ == "__main__":
     parser.add_argument('-k', '--keep-open', 
         action='count',
         help="Keep browser window open after script is done")
+    parser.add_argument('--skip-login', 
+        action='count',
+        help="Don't login to account")
     parser.add_argument('--session-id',
         help="session-id of a running webdriver instance (need to be used with --executor-url).")
     parser.add_argument('--executor-url',
@@ -307,27 +363,51 @@ if __name__ == "__main__":
 
     with HltvContext(args, driver) as ctx:
         ctx.cookie_pass()
-        ctx.login()
-        input('press enter after finishing captcha\n> ')
+        if not args.skip_login:
+            ctx.login()
+            input('press enter after finishing captcha\n> ')
         logger.info('speed up implicit wait')
         ctx.implicit_wait = 1
-        ctx.goto_leaguepage()
 
         while True:
             try:
-                answer = input('cache what?\n [p]layers\n [r]oles\n [b]oosters\n or [q]uit\n> ')
+                answer = input(f'{ctx.current_leagueid=}, do what?\n [s]elect league\n cache [p]layers\n cache [r]oles\n cache [b]oosters\n or [q]uit\n> ')
                 if answer in ['q', 'quit']:
                     break
-                elif answer in ['p', 'players']:
-                    ctx.goto_leaguepage()
-                    ctx.cache_players()
-                elif answer in ['r', 'roles']:
-                    ctx.goto_leaguepage()
-                    ctx.cache_roles()
-                elif answer in ['b', 'boosters']:
-                    ctx.goto_leaguepage()
-                    ctx.cache_boosters()
+
+                elif answer in ['s', 'select', 'select league']:
+                    ctx.goto_fantasypage()
+                    print(' select league')
+                    print('  live games:')
+                    live_games = ctx.scrape_games('live')
+                    for idx, (title, leagueid) in enumerate(live_games):
+                        print(f'   [{idx:2d}] - {leagueid:4d}: {title} ')
+                    idx += 1
+                    print('  draft games:')
+                    draft_games = ctx.scrape_games('draft')
+                    for idx, (title, leagueid) in enumerate(draft_games, start=idx):
+                        print(f'   [{idx:2d}] - {leagueid:4d}: {title} ')
+                    # try:
+                    ctx.leagueids = list(zip(*(live_games + draft_games)))[1]
+
+                    selected_idx = int(input('> '))
+                    if -1 < selected_idx < len(ctx.leagueids):
+                        ctx.current_leagueid = ctx.leagueids[selected_idx]
+                        logger.info(f'{ctx.current_leagueid=}')
+                
+                elif answer in ['p', 'players', 'cache players']:
+                    if ctx.goto_leaguepage():
+                        ctx.cache_players()
+                elif answer in ['r', 'roles', 'cache roles']:
+                    if ctx.goto_leaguepage():
+                        ctx.cache_roles()
+                elif answer in ['b', 'boosters', 'cache boosters']:
+                    if ctx.goto_leaguepage():
+                        ctx.cache_boosters()
+                    
                 else:
                     pass
             except KeyboardInterrupt:
+                break
+            except EOFError:
                 break
