@@ -380,9 +380,11 @@ if __name__ == "__main__":
                     print(' select league')
                     print('  live games:')
                     live_games = ctx.scrape_games('live')
+                    idx = 0
                     for idx, (title, leagueid) in enumerate(live_games):
                         print(f'   [{idx:2d}] - {leagueid:4d}: {title} ')
-                    idx += 1
+                    if idx != 0:
+                        idx += 1
                     print('  draft games:')
                     draft_games = ctx.scrape_games('draft')
                     for idx, (title, leagueid) in enumerate(draft_games, start=idx):
@@ -391,7 +393,7 @@ if __name__ == "__main__":
                     ctx.leagueids = list(zip(*(live_games + draft_games)))[1]
 
                     selected_idx = int(input('> '))
-                    if -1 < selected_idx < len(ctx.leagueids):
+                    if 0 <= selected_idx <= len(ctx.leagueids):
                         ctx.current_leagueid = ctx.leagueids[selected_idx]
                         logger.info(f'{ctx.current_leagueid=}')
                 
